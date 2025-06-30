@@ -85,7 +85,7 @@ def buscar_titulo_por_url(url_procurada):
             
             for linha in leitor:
                 if linha.get('url') == url_procurada:
-                    return linha.get('title')
+                    return linha.get('title'), linha.get('length')
             
             print(f"URL '{url_procurada}' não encontrada no arquivo.")
             return None
@@ -104,10 +104,8 @@ def download_from_youtube(input_url, download=True):
     else:
         urls = [input_url]
         playlist = None
-        yt = YouTube(url, use_oauth=True, allow_oauth_cache=True, on_progress_callback=on_progress)
     for url in urls:
-        length = yt.length
-        title = buscar_titulo_por_url(url)
+        title, length = buscar_titulo_por_url(url)
         if title:
             result = {
                 "url": url,
@@ -118,6 +116,8 @@ def download_from_youtube(input_url, download=True):
             }
             logging.info(f'Video exists: {url} {title}')
             continue
+        yt = YouTube(url, use_oauth=True, allow_oauth_cache=True, on_progress_callback=on_progress)
+        length = yt.length
         title = yt.title
 
         ys = yt.streams.get_highest_resolution()
