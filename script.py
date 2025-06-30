@@ -78,6 +78,25 @@ def extract_urls_from_playlist(url):
 
     return pl.video_urls
 
+def buscar_titulo_por_url(url_procurada):
+    try:
+        with open(CSV_FILE, mode='r', encoding='utf-8') as arquivo:
+            leitor = csv.DictReader(arquivo)
+            
+            for linha in leitor:
+                if linha.get('url') == url_procurada:
+                    return linha.get('title')
+            
+            print(f"URL '{url_procurada}' não encontrada no arquivo.")
+            return None
+            
+    except FileNotFoundError:
+        print(f"Erro: Arquivo '{CSV_FILE}' não encontrado.")
+        return None
+    except Exception as e:
+        print(f"Erro ao processar o CSV: {str(e)}")
+        return None
+
 def download_from_youtube(input_url, download=True):
     if 'playlist?list' in input_url:
         urls = extract_urls_from_playlist(input_url)
@@ -85,10 +104,21 @@ def download_from_youtube(input_url, download=True):
     else:
         urls = [input_url]
         playlist = None
-    for url in urls:
         yt = YouTube(url, use_oauth=True, allow_oauth_cache=True, on_progress_callback=on_progress)
-        title = yt.title
+    for url in urls:
         length = yt.length
+        title = buscar_titulo_por_url(url)
+        if title:
+            result = {
+                "url": url,
+                "title": title,
+                "playlist": playlist,
+                "length": length,
+                "downloaded": True
+            }
+            logging.info(f'Video exists: {url} {title}')
+            continue
+        title = yt.title
 
         ys = yt.streams.get_highest_resolution()
         result = {
@@ -100,11 +130,14 @@ def download_from_youtube(input_url, download=True):
         }
         logging.info(result)
         logging.info('\n')
+        download_path = 'downloads'
         if download:
-            ys.download(output_path='downloads')
-            result['downloaded'] = True
+            ys.download(output_path=download_path)
+            sleep(5)
+            if os.path.isfile(f'{download_path}/{title}.mp4'):
+                result['downloaded'] = True
         update_csv(result)
-        sleep(10)
+        sleep(5)
     if playlist and download:
         result = {
             "url": playlist,
