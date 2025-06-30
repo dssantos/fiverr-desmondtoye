@@ -3,10 +3,13 @@ import csv
 from time import sleep
 from datetime import datetime
 import logging
+from pathlib import Path
 
 from openpyxl import load_workbook
 from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
+
+DOWNLOADS_PATH = 'downloads'
 
 # === Configuração de Logging ===
 
@@ -132,6 +135,30 @@ def buscar_titulo_por_url(url_procurada):
         logging.error(f"Erro ao processar o CSV: {str(e)}")
         return '', ''
 
+def listar_arquivos_downloads(pasta=DOWNLOADS_PATH, extensao=None, contem=None):
+    try:
+        # Resolve caminho absoluto e expande ~
+        pasta = Path(pasta).expanduser().absolute()
+        
+        if not pasta.exists():
+            raise FileNotFoundError(f"Pasta não encontrada: {pasta}")
+            
+        arquivos = []
+        for item in pasta.iterdir():
+            if item.is_file():
+                # Aplica filtros
+                if extensao and not item.name.lower().endswith(extensao.lower()):
+                    continue
+                if contem and contem.lower() not in item.name.lower():
+                    continue
+                arquivos.append(str(item).split('/')[-1])
+        
+        return arquivos
+        
+    except Exception as e:
+        print(f"Erro ao listar arquivos: {str(e)}")
+        return []
+
 def download_from_youtube(input_url, download=True):
     input_url_id = input_url['id']
     input_url = input_url['link']
@@ -144,7 +171,7 @@ def download_from_youtube(input_url, download=True):
         playlist = None
     for url in urls:
         title, length = buscar_titulo_por_url(url)
-        if title != None and title != '':
+        if title+'.mp4' in listar_arquivos_downloads() and title != '':
             result = {
                 "url": url,
                 "title": title,
@@ -168,11 +195,11 @@ def download_from_youtube(input_url, download=True):
         }
         logging.info(result)
         logging.info('\n')
-        download_path = 'downloads'
+        
         if download:
-            ys.download(output_path=download_path)
+            ys.download(output_path=DOWNLOADS_PATH)
             sleep(5)
-            if os.path.isfile(f'{download_path}/{title}.mp4'):
+            if os.path.isfile(f'{DOWNLOADS_PATH}/{title}.mp4'):
                 result['downloaded'] = True
         update_csv(result)
         sleep(5)
