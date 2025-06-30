@@ -4,6 +4,7 @@ from time import sleep
 from datetime import datetime
 import logging
 
+from openpyxl import load_workbook
 from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
 
@@ -73,6 +74,40 @@ def not_downloaded(csv_file):
     
     return list(all_urls - downloaded_urls)
 
+def extrair_links_com_ids(arquivo_xlsx):
+    try:
+        # Carrega o arquivo Excel
+        wb = load_workbook(arquivo_xlsx)
+        planilha = wb.active
+        
+        # Encontra a coluna 'LINK'
+        coluna_link = None
+        for cell in planilha[1]:  # Verifica a primeira linha (cabeçalho)
+            if cell.value and str(cell.value).strip().upper() == 'LINK':
+                coluna_link = cell.column_letter
+                break
+        
+        if not coluna_link:
+            raise ValueError("Coluna 'LINK' não encontrada na planilha")
+        
+        # Extrai os dados
+        dados = []
+        for idx, row in enumerate(planilha.iter_rows(min_row=2, values_only=True), start=2):
+            link = row[ord(coluna_link.lower()) - ord('a')]  # Converte letra para índice
+            if link:  # Ignora linhas vazias
+                dados.append({'id': idx, 'link': str(link)})
+        
+        return dados
+        
+    except Exception as e:
+        logging.error(f"Erro ao processar arquivo: {str(e)}")
+        return []
+
+# Uso:
+# links = extrair_links_com_ids('planilha.xlsx')
+# for item in links:
+#     print(f"ID: {item['id']}, Link: {item['link']}")
+
 def extract_urls_from_playlist(url):
     pl = Playlist(url)
 
@@ -87,19 +122,22 @@ def buscar_titulo_por_url(url_procurada):
                 if linha.get('url') == url_procurada:
                     return linha.get('title'), linha.get('length')
             
-            print(f"URL '{url_procurada}' não encontrada no arquivo.")
-            return None
+            # logging.info(f"URL '{url_procurada}' não encontrada no arquivo.")
+            return '', ''
             
     except FileNotFoundError:
-        print(f"Erro: Arquivo '{CSV_FILE}' não encontrado.")
-        return None
+        logging.error(f"Erro: Arquivo '{CSV_FILE}' não encontrado.")
+        return '', ''
     except Exception as e:
-        print(f"Erro ao processar o CSV: {str(e)}")
-        return None
+        logging.error(f"Erro ao processar o CSV: {str(e)}")
+        return '', ''
 
 def download_from_youtube(input_url, download=True):
+    input_url_id = input_url['id']
+    input_url = input_url['link']
     if 'playlist?list' in input_url:
         urls = extract_urls_from_playlist(input_url)
+        logging.info(f'Playlist Urls to download: {len(urls)} {input_url}')
         playlist = input_url
     else:
         urls = [input_url]
@@ -148,7 +186,7 @@ def download_from_youtube(input_url, download=True):
         }
         update_csv(result)
 
-urls_to_download = not_downloaded('links.csv')
+urls_to_download = extrair_links_com_ids('Copy of Pregnant Face Dataset.xlsx') # not_downloaded('links.csv')
 logging.info(f'Urls to download: {len(urls_to_download)}')
 for new_url in urls_to_download:
     download_from_youtube(new_url)#, download=False)
