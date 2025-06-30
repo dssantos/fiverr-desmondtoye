@@ -106,7 +106,7 @@ def download_from_youtube(input_url, download=True):
         playlist = None
     for url in urls:
         title, length = buscar_titulo_por_url(url)
-        if title:
+        if title != None and title != '':
             result = {
                 "url": url,
                 "title": title,
