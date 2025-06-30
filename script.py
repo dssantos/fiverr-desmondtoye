@@ -78,9 +78,9 @@ def extract_urls_from_playlist(url):
 
     return pl.video_urls
 
-def download_from_youtube(input_url, download=False):
+def download_from_youtube(input_url, download=True):
     if 'playlist?list' in input_url:
-        urls = extract_urls_from_playlist(input_url)[:1]
+        urls = extract_urls_from_playlist(input_url)
         playlist = input_url
     else:
         urls = [input_url]
@@ -115,5 +115,8 @@ def download_from_youtube(input_url, download=False):
         }
         update_csv(result)
 
-for new_url in not_downloaded('links.csv'):
+urls_to_download = not_downloaded('links.csv')
+logging.info(f'Urls to download: {len(urls_to_download)}')
+for new_url in urls_to_download:
     download_from_youtube(new_url)#, download=False)
+logging.info('\nFinished!')
