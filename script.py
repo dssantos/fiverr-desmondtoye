@@ -383,7 +383,7 @@ elif option == 6:
                     f'{DOWNLOADS_PATH}/{filename_local}',
                     f'{s3_folder_name}/{filename_s3}'
                 ):
-                    logging.warning(f'Not upload: Data ID: {s3_folder_name} YT_ID: {youtube_id} Title: {video_title} Url: {video_data['url']}')
+                    logging.warning(f"Not upload: Data ID: {s3_folder_name} YT_ID: {youtube_id} Title: {video_title} Url: {video_data['url']}")
                     filename_local = f"{youtube_id}.mp4"
                     upload_file_to_s3(config('S3_BUCKET'), f'{DOWNLOADS_PATH}/{filename_local}', f'{s3_folder_name}/{filename_s3}')
 
