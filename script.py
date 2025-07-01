@@ -143,9 +143,24 @@ def retrieve_metadata_from_url(url, csv_file=CSV_FILE):
                     return video_metadata
 
 def download_video(url):
-    yt = YouTube(url, use_oauth=True, allow_oauth_cache=True, on_progress_callback=on_progress)
-    ys = yt.streams.get_highest_resolution()
-    ys.download(output_path=DOWNLOADS_PATH)
+    # yt = YouTube(url, use_oauth=True, allow_oauth_cache=True, on_progress_callback=on_progress)
+    # ys = yt.streams.get_highest_resolution()
+    # ys.download(output_path=DOWNLOADS_PATH)
+
+    yt = YouTube(
+            url,
+            use_oauth=True,
+            allow_oauth_cache=True,
+            on_progress_callback=lambda stream, chunk, bytes_remaining: 
+                logging.info(f"Downloading {url} ... {bytes_remaining / (1024 * 1024):.2f}MB remaining"),
+            on_complete_callback=lambda stream, file_path: 
+                logging.info(f"Download completed: {file_path}")
+        )
+    stream = yt.streams.filter(
+            progressive=True,
+            file_extension='mp4'
+        ).order_by('resolution').desc().first()
+    return stream.download(output_path=DOWNLOADS_PATH)
 
 def get_metadata(input_url):
     input_url_id = input_url['id']
@@ -239,9 +254,14 @@ elif option == 3:
     for video_data in list_metadata():
         video_title = video_data['title']
         video_id = video_data['url'].split('=')[-1]
-        if f"{video_title} ({video_id}).mp4" in downloaded:
-            video_data['downloaded'] = True
-            update_csv(video_data)
+        if video_id in video_title:
+            if f"{video_title}.mp4" in downloaded:
+                video_data['downloaded'] = True
+                update_csv(video_data)
+        else:
+            if f"{video_title} ({video_id}).mp4" in downloaded:
+                video_data['downloaded'] = True
+                update_csv(video_data)
 
 elif option == 4:
     # Rename Titles
@@ -257,8 +277,11 @@ elif option ==5:
         video_title = video_data['title']
         video_id = video_data['url'].split('=')[-1]
         if video_data['downloaded'] == 'False':
-            download_video(video_data['url'])
-            os.rename(f"downloads/{video_title}.mp4", f"downloads/{video_title} ({video_id}).mp4")
-            video_data['downloaded'] = True
-            logging.info(f'Saved: {video_data}')
+            file_path = download_video(video_data['url'])
+            if os.path.exists(file_path):
+                os.rename(f"downloads/{video_title}.mp4", f"downloads/{video_title} ({video_id}).mp4")
+                video_data['downloaded'] = True
+                logging.info(f'Saved: {video_data}')
+            else:
+                logging.info(f'Failed: {video_data}')
             sleep(10)
