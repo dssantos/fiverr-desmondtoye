@@ -261,3 +261,4 @@ elif option ==5:
             os.rename(f"downloads/{video_title}.mp4", f"downloads/{video_title} ({video_id}).mp4")
             video_data['downloaded'] = True
             logging.info(f'Saved: {video_data}')
+            sleep(10)
