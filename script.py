@@ -228,7 +228,10 @@ elif option == 2:
         if f"{video_title}.mp4" in downloaded and video_title not in find_duplicated():
             video_id = video_data['url'].split('=')[-1]
             if video_id not in video_title:
-                os.rename(f"downloads/{video_title}.mp4'", f"downloads/{video_title} ({video_id}).mp4")
+                try:
+                    os.rename(f"downloads/{video_title}.mp4", f"downloads/{video_title} ({video_id}).mp4")
+                except FileNotFoundError as e:
+                    logging.warning(f"Not found {video_title}.mp4")
 
 elif option == 3:
     # Check downloaded
