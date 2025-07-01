@@ -1,3 +1,5 @@
 pytubefix
 pandas
 openpyxl
+boto3
+python-decouple

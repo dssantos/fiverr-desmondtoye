@@ -9,6 +9,9 @@ import pandas as pd
 from openpyxl import load_workbook
 from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
+from pytubefix.exceptions import VideoUnavailable
+import boto3
+from decouple import config
 
 DOWNLOADS_PATH = 'downloads'
 
@@ -156,10 +159,14 @@ def download_video(url):
             on_complete_callback=lambda stream, file_path: 
                 logging.info(f"Download completed: {file_path}")
         )
-    stream = yt.streams.filter(
+    try:
+        stream = yt.streams.filter(
             progressive=True,
             file_extension='mp4'
         ).order_by('resolution').desc().first()
+    except VideoUnavailable as e:
+        logging.warning(f'Video unavailable: {url} {e}')
+        return 'FAILED'
     return stream.download(output_path=DOWNLOADS_PATH)
 
 def get_metadata(input_url):
@@ -225,7 +232,55 @@ def find_duplicated(csv_file=CSV_FILE):
         logging.info(f"Error: {str(e)}")
         return []
 
-option = 5
+s3 = boto3.client(
+    's3',
+    aws_access_key_id=config('S3_ACCESS_KEY'),
+    aws_secret_access_key=config('S3_SECRET_KEY'),
+    region_name=config('S3_REGION')  # Ex: 'us-east-1'
+)
+
+def s3_folder_exists(bucket_name, pasta_path):
+    if not pasta_path.endswith('/'):
+        pasta_path += '/'
+    
+    response = s3.list_objects_v2(
+        Bucket=bucket_name,
+        Prefix=pasta_path,
+        MaxKeys=1
+    )
+    
+    return 'Contents' in response
+
+def create_s3_folder(bucket_name, folder_path):
+    if not folder_path.endswith('/'):
+        folder_path += '/'
+    
+    s3.put_object(
+        Bucket=bucket_name,
+        Key=folder_path
+    )
+    logging.info(f"Folder '{folder_path}' created.")
+
+def upload_file_to_s3(bucket_name, local_path, s3_path):
+    try:
+        s3.upload_file(
+            local_path,
+            bucket_name,
+            s3_path,
+            ExtraArgs={
+                'ACL': 'bucket-owner-full-control',  # Importante para acesso do cliente
+                'Metadata': {
+                    'uploaded-by': 'fiverr'
+                }
+            }
+        )
+        logging.info(f"File {local_path} send to {s3_path}")
+        return True
+    except Exception as e:
+        logging.info(f"Error upload: {str(e)}")
+        return False
+
+option = 6
 
 if option == 1:
     # Get metadata
@@ -285,3 +340,37 @@ elif option ==5:
             else:
                 logging.info(f'Failed: {video_data}')
             sleep(10)
+
+elif option == 6:
+    ## Upload to S3
+    jump = False # change to True to continue from last uploaded
+    for video_data in list_metadata():
+        s3_folder_name = video_data['id']
+        youtube_id = video_data['url'].split('=')[-1]
+        video_title = video_data['title']
+        if jump:
+            if f'{s3_folder_name}/{video_title} ({youtube_id})' == 'PASTE_LAST_UPLOADED':
+                jump = False 
+            continue
+        if youtube_id in video_title:
+            filename_s3 = f"{video_title}.mp4"
+        else:
+            filename_s3 = f"{video_title} ({youtube_id}).mp4"
+        if not s3_folder_exists(config('S3_BUCKET'), s3_folder_name):
+            create_s3_folder(config('S3_BUCKET'), s3_folder_name)
+        
+        filename_local = f"{video_title} ({youtube_id}).mp4"
+        if not upload_file_to_s3(
+            config('S3_BUCKET'),
+            f'{DOWNLOADS_PATH}/{filename_local}',
+            f'{s3_folder_name}/{filename_s3}'
+        ):
+            filename_local = f"{video_title}.mp4"
+            upload_file_to_s3(
+                config('S3_BUCKET'),
+                f'{DOWNLOADS_PATH}/{filename_local}',
+                f'{s3_folder_name}/{filename_s3}')
+        sleep(1)
+            
+
+
