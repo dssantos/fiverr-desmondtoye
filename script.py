@@ -210,7 +210,7 @@ def find_duplicated(csv_file=CSV_FILE):
         logging.info(f"Error: {str(e)}")
         return []
 
-option = 2
+option = 5
 
 if option == 1:
     # Get metadata
@@ -254,7 +254,10 @@ elif option == 4:
 elif option ==5:
     ## Download videos
     for video_data in list_metadata():
+        video_title = video_data['title']
+        video_id = video_data['url'].split('=')[-1]
         if video_data['downloaded'] == 'False':
             download_video(video_data['url'])
+            os.rename(f"downloads/{video_title}.mp4", f"downloads/{video_title} ({video_id}).mp4")
             video_data['downloaded'] = True
             logging.info(f'Saved: {video_data}')
