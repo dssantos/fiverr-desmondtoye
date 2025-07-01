@@ -11,6 +11,7 @@ from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
 from pytubefix.exceptions import VideoUnavailable
 import boto3
+from botocore.exceptions import ClientError
 from decouple import config
 
 DOWNLOADS_PATH = 'downloads'
@@ -280,6 +281,15 @@ def upload_file_to_s3(bucket_name, local_path, s3_path):
         logging.info(f"Error upload: {str(e)}")
         return False
 
+def check_file_exists_s3(bucket_name, file_key):
+    try:
+        s3.head_object(Bucket=bucket_name, Key=file_key)
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            return False
+        raise
+
 option = 6
 
 if option == 1:
@@ -358,19 +368,23 @@ elif option == 6:
             filename_s3 = f"{video_title} ({youtube_id}).mp4"
         if not s3_folder_exists(config('S3_BUCKET'), s3_folder_name):
             create_s3_folder(config('S3_BUCKET'), s3_folder_name)
-        
-        filename_local = f"{video_title} ({youtube_id}).mp4"
-        if not upload_file_to_s3(
-            config('S3_BUCKET'),
-            f'{DOWNLOADS_PATH}/{filename_local}',
-            f'{s3_folder_name}/{filename_s3}'
-        ):
-            filename_local = f"{video_title}.mp4"
-            upload_file_to_s3(
+        file_to_check = f"{s3_folder_name}/{video_title} ({youtube_id}).mp4"
+        logging.info(f'Checking: {file_to_check}')
+        if not check_file_exists_s3(config('S3_BUCKET'), file_to_check):
+            filename_local = f"{video_title} ({youtube_id}).mp4"
+            if not upload_file_to_s3(
                 config('S3_BUCKET'),
                 f'{DOWNLOADS_PATH}/{filename_local}',
-                f'{s3_folder_name}/{filename_s3}')
-        sleep(1)
-            
+                f'{s3_folder_name}/{filename_s3}'
+            ):
+                filename_local = f"{video_title}.mp4"
+                if not upload_file_to_s3(
+                    config('S3_BUCKET'),
+                    f'{DOWNLOADS_PATH}/{filename_local}',
+                    f'{s3_folder_name}/{filename_s3}'
+                ):
+                    logging.warning(f'Not upload: Data ID: {s3_folder_name} YT_ID: {youtube_id} Title: {video_title} Url: {video_data['url']}')
+                    filename_local = f"{youtube_id}.mp4"
+                    upload_file_to_s3(config('S3_BUCKET'), f'{DOWNLOADS_PATH}/{filename_local}', f'{s3_folder_name}/{filename_s3}')
 
-
+            sleep(1)
