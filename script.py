@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 from pathlib import Path
 
+import pandas as pd
 from openpyxl import load_workbook
 from pytubefix import YouTube, Playlist
 from pytubefix.cli import on_progress
@@ -60,23 +61,6 @@ def update_csv(video_data):
         writer.writeheader()
         writer.writerows(rows)
 
-def not_downloaded(csv_file):
-    """Retorna uma lista de URLs do CSV que ainda não foram baixados."""
-    downloaded_urls = set()
-    all_urls = set()
-    
-    if not os.path.exists(csv_file):
-        return []
-    
-    with open(csv_file, mode='r', encoding='utf-8') as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            all_urls.add(row['url'])
-            if row.get('downloaded', '').lower() == 'true':
-                downloaded_urls.add(row['url'])
-    
-    return list(all_urls - downloaded_urls)
-
 def extrair_links_com_ids(arquivo_xlsx):
     try:
         # Carrega o arquivo Excel
@@ -106,60 +90,64 @@ def extrair_links_com_ids(arquivo_xlsx):
         logging.error(f"Erro ao processar arquivo: {str(e)}")
         return []
 
-# Uso:
-# links = extrair_links_com_ids('planilha.xlsx')
-# for item in links:
-#     print(f"ID: {item['id']}, Link: {item['link']}")
-
 def extract_urls_from_playlist(url):
     pl = Playlist(url)
 
     return pl.video_urls
 
-def buscar_titulo_por_url(url_procurada):
-    try:
-        with open(CSV_FILE, mode='r', encoding='utf-8') as arquivo:
-            leitor = csv.DictReader(arquivo)
-            
-            for linha in leitor:
-                if linha.get('url') == url_procurada:
-                    return linha.get('title'), linha.get('length')
-            
-            # logging.info(f"URL '{url_procurada}' não encontrada no arquivo.")
-            return '', ''
-            
-    except FileNotFoundError:
-        logging.error(f"Erro: Arquivo '{CSV_FILE}' não encontrado.")
-        return '', ''
-    except Exception as e:
-        logging.error(f"Erro ao processar o CSV: {str(e)}")
-        return '', ''
-
-def listar_arquivos_downloads(pasta=DOWNLOADS_PATH, extensao=None, contem=None):
-    try:
-        # Resolve caminho absoluto e expande ~
-        pasta = Path(pasta).expanduser().absolute()
-        
-        if not pasta.exists():
-            raise FileNotFoundError(f"Pasta não encontrada: {pasta}")
-            
-        arquivos = []
-        for item in pasta.iterdir():
-            if item.is_file():
-                # Aplica filtros
-                if extensao and not item.name.lower().endswith(extensao.lower()):
-                    continue
-                if contem and contem.lower() not in item.name.lower():
-                    continue
-                arquivos.append(str(item).split('/')[-1])
-        
-        return arquivos
-        
-    except Exception as e:
-        print(f"Erro ao listar arquivos: {str(e)}")
+def get_links(csv_file=CSV_FILE):
+    all_urls = set()
+    
+    if not os.path.exists(csv_file):
         return []
+    
+    with open(csv_file, mode='r', encoding='utf-8') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            all_urls.add(row['url'])
+    
+    return list(all_urls)
 
-def download_from_youtube(input_url, download=True):
+def list_metadata(csv_file=CSV_FILE):
+    rows = []
+    if os.path.isfile(csv_file):
+        with open(csv_file, mode='r', newline='', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                video_metadata = {
+                    'id': row.get('id'),
+                    'url': row.get('url'),
+                    'title': row.get('title'),
+                    'playlist': row.get('playlist'),
+                    'length': row.get('length'),
+                    'downloaded': row.get('downloaded')
+                }
+                rows.append(video_metadata)
+
+    return rows
+
+def retrieve_metadata_from_url(url, csv_file=CSV_FILE):
+    if os.path.isfile(csv_file):
+        with open(csv_file, mode='r', newline='', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if row.get('url') == url:
+                    video_metadata = {
+                        'id': row.get('id'),
+                        'url': row.get('url'),
+                        'title': row.get('title'),
+                        'playlist': row.get('playlist'),
+                        'length': row.get('length'),
+                        'downloaded': row.get('downloaded')
+                    }
+                    return video_metadata
+
+def download_video(url):
+    yt = YouTube(url, use_oauth=True, allow_oauth_cache=True, on_progress_callback=on_progress)
+    ys = yt.streams.get_highest_resolution()
+    ys.download(output_path=DOWNLOADS_PATH)
+
+def get_metadata(input_url):
     input_url_id = input_url['id']
     input_url = input_url['link']
     if 'playlist?list' in input_url:
@@ -169,24 +157,16 @@ def download_from_youtube(input_url, download=True):
     else:
         urls = [input_url]
         playlist = None
+    existing_urls = get_links()
     for url in urls:
-        title, length = buscar_titulo_por_url(url)
-        if title+'.mp4' in listar_arquivos_downloads() and title != '':
-            result = {
-                "url": url,
-                "title": title,
-                "playlist": playlist,
-                "length": length,
-                "downloaded": True
-            }
-            logging.info(f'Video exists: {url} {title}')
+        if url in existing_urls:
             continue
-        yt = YouTube(url, use_oauth=True, allow_oauth_cache=True, on_progress_callback=on_progress)
+        yt = YouTube(url, use_oauth=True, allow_oauth_cache=True)
         length = yt.length
         title = yt.title
 
-        ys = yt.streams.get_highest_resolution()
         result = {
+            "id": input_url_id,
             "url": url,
             "title": title,
             "playlist": playlist,
@@ -195,26 +175,83 @@ def download_from_youtube(input_url, download=True):
         }
         logging.info(result)
         logging.info('\n')
-        
-        if download:
-            ys.download(output_path=DOWNLOADS_PATH)
-            sleep(5)
-            if os.path.isfile(f'{DOWNLOADS_PATH}/{title}.mp4'):
-                result['downloaded'] = True
+
         update_csv(result)
         sleep(5)
-    if playlist and download:
-        result = {
-            "url": playlist,
-            "title": None,
-            "playlist": playlist,
-            "length": None,
-            "downloaded": True
-        }
-        update_csv(result)
 
-urls_to_download = extrair_links_com_ids('Copy of Pregnant Face Dataset.xlsx') # not_downloaded('links.csv')
-logging.info(f'Urls to download: {len(urls_to_download)}')
-for new_url in urls_to_download:
-    download_from_youtube(new_url)#, download=False)
-logging.info('\nFinished!')
+def list_downloaded_files(folder=DOWNLOADS_PATH):
+    try:
+        folder = Path(folder).expanduser().absolute()
+        
+        if not folder.exists():
+            raise FileNotFoundError(f"Folder not found: {folder}")
+            
+        files = []
+        for item in folder.iterdir():
+            if item.is_file():
+                files.append(str(item).split('/')[-1])
+        
+        return files
+        
+    except Exception as e:
+        print(f"Error to list files: {str(e)}")
+        return []
+
+def find_duplicated(csv_file=CSV_FILE):
+    try:
+        df = pd.read_csv(csv_file)
+        if 'title' not in df.columns:
+            return []
+            
+        duplicated = df[df.duplicated('title', keep=False)]['title'].unique()
+        return list(duplicated)
+        
+    except Exception as e:
+        logging.info(f"Error: {str(e)}")
+        return []
+
+option = 2
+
+if option == 1:
+    # Get metadata
+    urls_to_download = extrair_links_com_ids('Copy of Pregnant Face Dataset.xlsx')
+    logging.info(f'Urls to download: {len(urls_to_download)}')
+    for new_url in urls_to_download:
+        get_metadata(new_url)
+    logging.info('\nFinished metadata!')
+
+elif option == 2:
+    # Rename files
+    downloaded = list_downloaded_files()
+    for video_data in list_metadata():
+        video_title = video_data['title']
+        if f"{video_title}.mp4" in downloaded and video_title not in find_duplicated():
+            video_id = video_data['url'].split('=')[-1]
+            if video_id not in video_title:
+                os.rename(f"downloads/{video_title}.mp4'", f"downloads/{video_title} ({video_id}).mp4")
+
+elif option == 3:
+    # Check downloaded
+    downloaded = list_downloaded_files()
+    for video_data in list_metadata():
+        video_title = video_data['title']
+        video_id = video_data['url'].split('=')[-1]
+        if f"{video_title} ({video_id}).mp4" in downloaded:
+            video_data['downloaded'] = True
+            update_csv(video_data)
+
+elif option == 4:
+    # Rename Titles
+    for video_data in list_metadata():
+        video_title = video_data['title']
+        video_id = video_data['url'].split('=')[-1]
+        video_data['title'] = f"{video_title} ({video_id})"
+        update_csv(video_data)
+
+elif option ==5:
+    ## Download videos
+    for video_data in list_metadata():
+        if video_data['downloaded'] == 'False':
+            download_video(video_data['url'])
+            video_data['downloaded'] = True
+            logging.info(f'Saved: {video_data}')

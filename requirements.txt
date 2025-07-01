@@ -1,0 +1,3 @@
+pytubefix
+pandas
+openpyxl
