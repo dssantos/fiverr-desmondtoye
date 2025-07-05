@@ -2,6 +2,7 @@
 import os
 from datetime import timedelta
 import shutil
+import subprocess
 
 import cv2
 import mediapipe as mp
@@ -43,7 +44,7 @@ def extract_frames_with_timestamps(video_path, output_folder="frames", interval_
                 timestamp = '0' + timestamp
             
             # Nome do arquivo com timestamp
-            filename = f"frame_{timestamp.replace(':', '-')}.jpg"
+            filename = f"frame_{timestamp.replace(':', '-')}-{saved_count}.jpg"
             output_path = os.path.join(output_folder, filename)
             
             # Salva o frame
@@ -64,48 +65,6 @@ def detect_face(image_path):
     except ValueError:
         return False, 0
 
-def find_best_20s_segment(frames_folder, fps=1):
-    frames = sorted(os.listdir(frames_folder))
-    frame_count = len(frames)
-    window_size = 21 * fps  # Número de frames em 20 segundos
-    confidence_scores = []
-    detections = []
-    
-    # 1. Coletar todas as confianças e detecções
-    for img in frames:
-        image_path = os.path.join(frames_folder, img)
-        detected, confidence = detect_face(image_path)
-        if detected:
-            print(f"✅ Face Detected: {confidence:.2%} {image_path}")
-        else:
-            print(f"❌ Not detected: {confidence:.2%} {image_path}")
-        confidence_scores.append(confidence if detected else 0)
-        detections.append(detected)
-    
-    # 2. Encontrar todas as janelas válidas (com pelo menos 3 detecções consecutivas)
-    valid_windows = []
-    for i in range(frame_count - window_size + 1):
-        start_frame = i
-        end_frame = i + window_size - 1
-        
-        if has_consecutive_detections(detections, start_frame, end_frame):
-            window_sum = sum(confidence_scores[start_frame:end_frame+1])
-            valid_windows.append((start_frame, end_frame, window_sum))
-    
-    if not valid_windows:
-        print("Nenhuma janela válida encontrada com 3+ detecções consecutivas")
-        return None
-    
-    # 3. Selecionar a janela com maior soma de confiança
-    valid_windows.sort(key=lambda x: x[2], reverse=True)
-    best_window = valid_windows[0]
-    
-    # 4. Best window
-    start_sec = best_window[0] / fps
-    end_sec = best_window[1] / fps
-    
-    return (start_sec, end_sec, best_window[2])
-
 def calculate_required_density(gap_size):
     """Calcula a densidade mínima requerida baseada no tamanho do intervalo"""
     if gap_size <= 3:
@@ -115,9 +74,53 @@ def calculate_required_density(gap_size):
     else:
         return min(0.30 + gap_size * 0.025, 1.0)  # Aumenta 2.5% por elemento a partir de 5
 
-def find_sequences(frames_folder, min_length=3):
+def split_tuples(tuples_list, max_size=21):
+    result = []
+    
+    for start, end in tuples_list:
+        diff = end - start + 1  # +1 porque inclui ambos os extremos
+        
+        if diff <= max_size:
+            result.append((start, end))
+        else:
+            current_start = start
+            while current_start <= end:
+                current_end = min(current_start + max_size - 1, end)
+                result.append((current_start, current_end))
+                current_start = current_end + 1
+    
+    return result
+
+def adjust_tuples(tuples_list, min_limit=0, max_limit=18):
+    adjusted = []
+    
+    for start, end in tuples_list:
+        diff = end - start
+        
+        if diff <= 4:
+            # Caso especial: tupla no limite mínimo
+            if start == min_limit:
+                new_start = start
+                new_end = min(end + 2, max_limit)
+            # Caso especial: tupla no limite máximo
+            elif end >= max_limit:
+                new_start = max(start - 2, min_limit)
+                new_end = end
+            # Caso normal: expande para ambos os lados
+            else:
+                new_start = max(start - 1, min_limit)
+                new_end = min(end + 1, max_limit)
+            
+            adjusted.append((new_start, new_end))
+        else:
+            adjusted.append((start, end))
+    
+    return adjusted
+
+def find_sequences(frames_folder, min_length=4, max_length=21):
 
     frames = sorted(os.listdir(frames_folder))
+    len_frames = len(frames)
     confidence_scores = []
     detections = []
     
@@ -142,7 +145,7 @@ def find_sequences(frames_folder, min_length=3):
             while i < n and detections[i] == 1:
                 i += 1
             end = i - 1
-            if (end - start + 1) >= min_length:
+            if (end - start + 1) >= 4:
                 sequences.append((start, end))
         else:
             i += 1
@@ -168,10 +171,18 @@ def find_sequences(frames_folder, min_length=3):
             else:
                 density = 1.0
             
-            if gap_size <= 0 or density >= required_density:
+            if (gap_size <= 0 
+                or density >= required_density 
+                or detections[gap_start:gap_end+1] in [[0],[0,1,0],[0,1,1,0],[0,1,0,1,0],[0,1,1,1,0]]
+                ):
                 grouped[-1] = (last_start, current_end)
             else:
                 grouped.append(current)
+        
+        grouped = split_tuples(grouped)
+        grouped = adjust_tuples(grouped, max_limit=len_frames)
+
+
         return grouped
     
     # 3. Agrupar iterativamente até não haver mais mudanças
@@ -221,6 +232,81 @@ def video_cut(input, output, start_seconds, end_seconds):
     except Exception as e:
         return f"Erro: {str(e)}"
 
+def check_ffmpeg_installed():
+    """Verifica se ffmpeg e ffprobe estão instalados"""
+    ffmpeg_path = shutil.which('ffmpeg')
+    ffprobe_path = shutil.which('ffprobe')
+    
+    if not ffmpeg_path or not ffprobe_path:
+        raise EnvironmentError(
+            "FFmpeg não encontrado. Por favor instale:\n"
+            "Linux: sudo apt install ffmpeg\n"
+            "macOS: brew install ffmpeg\n"
+            "Windows: choco install ffmpeg"
+        )
+    return ffmpeg_path, ffprobe_path
+
+def resize_video(input_path, output_path, width=1280, height=720):
+    """Redimensiona vídeo para 1280x720 cortando APENAS o topo para vídeos verticais"""
+    out_folder = '/'.join(output_path.split('/')[:-1])
+    os.makedirs(out_folder, exist_ok=True)
+    try:
+        ffmpeg_path, ffprobe_path = check_ffmpeg_installed()
+        
+        if not os.path.exists(input_path):
+            raise FileNotFoundError(f"Arquivo não encontrado: {input_path}")
+
+        # Obtém dimensões originais
+        cmd_probe = [
+            ffprobe_path,
+            '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=width,height',
+            '-of', 'csv=p=0',
+            input_path
+        ]
+        
+        original_dims = subprocess.check_output(cmd_probe).decode('utf-8').strip().split(',')
+        original_width, original_height = map(int, original_dims)
+        
+        is_vertical = original_height > original_width
+
+        if is_vertical:
+            # Cálculo para cortar o TOPO
+            scale_height = int(width * original_height / original_width)
+            vf = [
+                f"scale={width}:{scale_height}",  # Escala primeiro
+                f"crop={width}:{height}:0:0",    # Corta o TOPO (y=0)
+                f"pad={width}:{height}:0:0"      # Garante dimensão exata
+            ]
+        else:
+            # Lógica para vídeos horizontais
+            vf = [
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease",
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
+            ]
+
+        cmd = [
+            ffmpeg_path,
+            '-i', input_path,
+            '-vf', ",".join(vf),
+            '-c:a', 'copy',
+            '-movflags', '+faststart',
+            '-y',
+            output_path
+        ]
+        
+        print("Comando executado:", " ".join(cmd))
+        subprocess.run(cmd, check=True)
+        print(f"✅ Vídeo processado: {output_path}")
+        print(f"Dimensões: Original {original_width}x{original_height} → Saída {width}x{height}")
+        return True
+
+    except Exception as e:
+        print(f"❌ Erro: {str(e)}")
+        return False
+
+
 for n in range(2,5):
     videos_folder = f's3_folder/{n}'
     video_filenames = sorted(os.listdir(videos_folder))
@@ -235,7 +321,7 @@ for n in range(2,5):
             continue
         try:
             # start_seconds, end_seconds, soma_conf = find_best_20s_segment(frames_folder, fps=1)
-            subvideos_indexes = find_sequences(frames_folder, min_length=3)
+            subvideos_indexes = find_sequences(frames_folder, min_length=4)
         except TypeError:
             print(f"No relevant faces found: {videos_folder}/{video_filename}")
             continue
@@ -245,6 +331,8 @@ for n in range(2,5):
             print(f"Trecho {n}: {start_seconds:.2f}s a {end_seconds:.2f}s ({start_time} a {end_time})")
             output = f's3_folder_out/{n}/{'.'.join(video_filename.split('.')[:-1])}_{i+1}.mp4'
             video_cut(f'{videos_folder}/{video_filename}', output, start_seconds, end_seconds)
+
+            resize_video(output, output.replace('_out', '_out_1280x720'), width=1280, height=720)
 
             
 

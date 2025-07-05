@@ -7,3 +7,5 @@ opencv-python
 deepface
 tf-keras
 moviepy==1.0.3
+ffmpeg
+subprocess32
